@@ -18,8 +18,6 @@ use self::dyngen::DynamicItems;
 use self::helpers::attributes;
 use self::struct_layout::StructLayoutTracker;
 
-use super::BindgenOptions;
-
 use crate::callbacks::{DeriveInfo, FieldInfo, TypeKind as DeriveTypeKind};
 use crate::codegen::error::Error;
 use crate::ir::analysis::{HasVtable, Sizedness};
@@ -1310,6 +1308,7 @@ trait FieldCodegen<'a> {
         fields: &mut F,
         methods: &mut M,
         extra: Self::Extra,
+        field_names_types: &mut Vec<(proc_macro2::Ident, syn::Type)>,
     ) where
         F: Extend<proc_macro2::TokenStream>,
         M: Extend<proc_macro2::TokenStream>;
@@ -1330,6 +1329,7 @@ impl<'a> FieldCodegen<'a> for Field {
         fields: &mut F,
         methods: &mut M,
         _: (),
+        field_names_types: &mut Vec<(proc_macro2::Ident, syn::Type)>,
     ) where
         F: Extend<proc_macro2::TokenStream>,
         M: Extend<proc_macro2::TokenStream>,
@@ -1347,6 +1347,7 @@ impl<'a> FieldCodegen<'a> for Field {
                     fields,
                     methods,
                     (),
+                    field_names_types,
                 );
             }
             Field::Bitfields(ref unit) => {
@@ -1361,6 +1362,7 @@ impl<'a> FieldCodegen<'a> for Field {
                     fields,
                     methods,
                     (),
+                    field_names_types,
                 );
             }
         }
@@ -1405,6 +1407,7 @@ impl<'a> FieldCodegen<'a> for FieldData {
         fields: &mut F,
         methods: &mut M,
         _: (),
+        field_names_types: &mut Vec<(proc_macro2::Ident, syn::Type)>,
     ) where
         F: Extend<proc_macro2::TokenStream>,
         M: Extend<proc_macro2::TokenStream>,
@@ -1491,6 +1494,7 @@ impl<'a> FieldCodegen<'a> for FieldData {
                 });
             }
         }
+        field_names_types.push((field_ident.clone(), ty.clone()));
 
         fields.extend(Some(field));
 
@@ -1659,6 +1663,7 @@ impl<'a> FieldCodegen<'a> for BitfieldUnit {
         fields: &mut F,
         methods: &mut M,
         _: (),
+        field_names_types: &mut Vec<(proc_macro2::Ident, syn::Type)>,
     ) where
         F: Extend<proc_macro2::TokenStream>,
         M: Extend<proc_macro2::TokenStream>,
@@ -1743,6 +1748,7 @@ impl<'a> FieldCodegen<'a> for BitfieldUnit {
                     &mut bitfield_representable_as_int,
                     &mut bitfield_visibility,
                 ),
+                field_names_types,
             );
             if bitfield_visibility < unit_visibility {
                 unit_visibility = bitfield_visibility;
@@ -1825,6 +1831,7 @@ impl<'a> FieldCodegen<'a> for Bitfield {
             &mut bool,
             &'a mut FieldVisibilityKind,
         ),
+        _field_names_types: &mut Vec<(proc_macro2::Ident, syn::Type)>,
     ) where
         F: Extend<proc_macro2::TokenStream>,
         M: Extend<proc_macro2::TokenStream>,
@@ -1967,6 +1974,7 @@ impl CodeGenerator for CompInfo {
         // the parent too.
         let is_opaque = item.is_opaque(ctx, &());
         let mut fields = vec![];
+        let mut field_names_types = vec![];
         let visibility = item
             .annotations()
             .visibility_kind()
@@ -2023,6 +2031,7 @@ impl CodeGenerator for CompInfo {
                 fields.push(quote! {
                     #access_spec #field_name: #inner,
                 });
+                field_names_types.push((field_name, inner));
             }
         }
 
@@ -2044,6 +2053,7 @@ impl CodeGenerator for CompInfo {
                     &mut fields,
                     &mut methods,
                     (),
+                    &mut field_names_types,
                 );
             }
             // Check whether an explicit padding field is needed
@@ -2303,6 +2313,58 @@ impl CodeGenerator for CompInfo {
                 #( #fields )*
             }
         });
+
+        if let Some(_ef_ty_cfg) = ctx
+            .omniglot_context()
+            .and_then(|ctx| ctx.config.types.get(&canonical_ident.to_string()))
+        {
+            assert!(
+                fields.len() == field_names_types.len(),
+                "field_names_types {:x?} does not account for all fields {:x?}",
+                field_names_types,
+                fields,
+            );
+
+            for (field_name, field_type) in field_names_types.iter() {
+                let field_name_ref = format_ident!("{}_ref", field_name);
+                let field_name_mut = format_ident!("{}_mut", field_name);
+
+                tokens.append_all(quote! {
+                    impl #canonical_ident {
+                        pub fn #field_name_ref<'a, ID: ::omniglot::id::OGID>(this: ::omniglot::foreign_memory::og_ref::OGRef<'a, ID, #canonical_ident>)
+                                           -> ::omniglot::foreign_memory::og_ref::OGRef<'a, ID, #field_type>
+                        {
+                            unsafe { this.sub_ref_unchecked(::core::mem::offset_of!(#canonical_ident, #field_name)) }
+                        }
+
+                        pub fn #field_name_mut<'a, ID: ::omniglot::id::OGID>(this: ::omniglot::foreign_memory::og_mut_ref::OGMutRef<'a, ID, #canonical_ident>)
+                                           -> ::omniglot::foreign_memory::og_mut_ref::OGMutRef<'a, ID, #field_type>
+                        {
+                            unsafe { this.sub_ref_unchecked(::core::mem::offset_of!(#canonical_ident, #field_name)) }
+                        }
+                    }
+                });
+            }
+
+            let validate_calls = field_names_types
+                .iter()
+                .fold(quote! { true }, |acc, (field_name, field_type)| quote! {
+                    #acc && unsafe { ::omniglot::bit_pattern_validate::BitPatternValidate::validate(
+                        t.byte_add(::core::mem::offset_of!(#canonical_ident, #field_name))
+                            as *const #field_type
+                    ) }
+                });
+
+            tokens.append_all(quote! {
+            unsafe impl ::omniglot::bit_pattern_validate::BitPatternValidate for #canonical_ident {
+                #[allow(unused)]
+                unsafe fn validate(t: *const Self) -> bool {
+                #validate_calls
+                }
+            }
+            });
+        }
+
         result.push(tokens);
 
         // Generate the inner types and all that stuff.
@@ -4306,6 +4368,391 @@ impl CodeGenerator for Function {
             }
         };
 
+        // let ret_or_unit = if ret.is_empty() { quote! { () } } else { ret.clone() };
+        let ret_or_unit = utils::fnsig_return_ty_no_arrow(ctx, signature);
+
+        if let Some(omniglot_context) = ctx.omniglot_context() {
+            // // Check whether this symbol is exported with a given omniglot
+            // // ID, otherwise skip it!
+            // let fn_name = ident.span().source_text().expect("Function identifier has no source text!");
+
+            if let Some(_fn_cfg) =
+                omniglot_context.config.functions.get(&ident.to_string())
+            {
+                // This is a function that is accessible in the Omniglot binary,
+                // interpolate its ID into the const generic arg.
+
+                // Don't support variadic functions yet, would likely
+                // involve passing the rt parameter as the first argument
+                // and unstacking and moving other arguments.
+                if let Some(WrapAsVariadic { .. }) = &wrap_as_variadic {
+                    panic!(
+                        "Omniglot bindings don't support variadic functions"
+                    );
+                }
+
+                // Request an oracle which we can use to determine certain
+                // properties about our function signature:
+                let oracle = omniglot_context.get_oracle_for_triple(
+                    ctx,
+                    &ctx.target_info().triple,
+                    ctx.abi_kind(),
+                );
+                if oracle.is_none() {
+                    eprintln!("Warning: Target triple {:?} and ABI {:?} combination unknown to Omniglot, only generating dummy bindings.", ctx.target_info().triple, ctx.abi_kind());
+                    panic!("Warning: Target triple {:?} and ABI {:?} combination unknown to Omniglot, only generating dummy bindings.", ctx.target_info().triple, ctx.abi_kind());
+                }
+
+                let argument_layouts: Vec<_> = signature
+                    .argument_types()
+                    .iter()
+                    .map(|(_name, type_id)| {
+                        let ty = ctx.resolve_type(*type_id);
+                        ty.layout(&ctx).expect(&format!(
+                            "Omniglot wrapper generation requires known layout of all types. Offending type: {:?}",
+                            ty,
+                        ))
+                    })
+                    .collect();
+
+                // To call our wrapper functions, we need to also have the
+                // argument identifiers available to us. TODO: these should
+                // not be able to contain any arguments we add in our
+                // wrappers. Perhaps automatically generate names for our
+                // additional arguments in case they collide?
+                let arg_idents =
+                    utils::fnsig_argument_identifiers(ctx, signature);
+
+                // TODO: verify that ABI is "C" and no attributes are passed!
+
+                let ident_int = format_ident!("{}_int", ident);
+
+                omniglot_context.trait_functions.borrow_mut().push(quote! {
+                    fn #ident(
+                    &self,
+                        #( #args, )*
+                        alloc_scope: &mut ::omniglot::markers::AllocScope<'_, <Self::RT as ::omniglot::rt::OGRuntime>::AllocTracker<'_>, ID>,
+                        access_scope: &mut ::omniglot::markers::AccessScope<ID>,
+                    ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_copy::OGCopy<#ret_or_unit>>;
+                });
+
+                let mut abi_trait_impls_borrow =
+                    omniglot_context.abi_trait_implementations.borrow_mut();
+
+                let abi_trait_impl = abi_trait_impls_borrow
+                    .entry("Mock".to_string()).or_insert_with(|| (
+                        Box::new(|lib_ident, rt_wrapper_ident, _rt_constraints, impls| {
+                            quote! {
+                                impl<
+                                    ID: ::omniglot::id::OGID,
+                                    A: ::omniglot::rt::mock::MockRtAllocator,
+                                    BorrowRT: ::core::borrow::Borrow<::omniglot::rt::mock::MockRt<ID, A>>
+                                >
+                                    #lib_ident<ID, ::omniglot::rt::mock::MockRt<ID, A>, ::omniglot::abi::GenericABI>
+                                    for #rt_wrapper_ident<ID, ::omniglot::rt::mock::MockRt<ID, A>, BorrowRT>
+                                {
+                                    type RT = ::omniglot::rt::mock::MockRt<ID, A>;
+
+                                    fn rt(&self) -> &Self::RT {
+                                        self.rt.borrow()
+                                    }
+
+                                    #( #impls )*
+                                }
+                            }
+                        }), vec![], vec![]));
+
+                let (_, _, ref mut impls) = abi_trait_impl;
+                impls.push(quote! {
+                    fn #ident(
+                        &self,
+                        #( #args, )*
+                        _alloc_scope: &mut ::omniglot::markers::AllocScope<'_, <Self::RT as ::omniglot::rt::OGRuntime>::AllocTracker<'_>, ID>,
+                        _access_scope: &mut ::omniglot::markers::AccessScope<ID>,
+                    ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_copy::OGCopy<#ret_or_unit>> {
+                        ::omniglot::OGResult::Ok(
+                            ::omniglot::foreign_memory::og_copy::OGCopy::new(
+                                unsafe { self::#ident(#( #arg_idents ),*) }))
+                    }
+                });
+
+                // If we do have an oracle, also generate platform-dependent bindings:
+                if let Some(ref oracle) = oracle {
+                    let abi_label = oracle.abi_label();
+                    let invoke_asm = oracle.invoke_asm();
+                    let abi_type = oracle.abi_type();
+                    let rt_trait = oracle.rt_trait();
+                    let rt_base_trait = oracle.rt_base_trait();
+                    let invoke_res_trait = oracle.invoke_res_trait();
+
+                    // Before we calculate the registers that arguments will be passed
+                    // in, we need to first determine whether the return value
+                    // will be passed by invisible pointer (as the first function
+                    // parameter, or if it is encoded in registers). For this,
+                    // determine whether the size of the return value type is
+                    // larger than two pointer widths. In that case, the return
+                    // value MUST be passed in memory.
+                    //
+                    // TODO: this test is not perfect, there are other occasions
+                    // when the return value gets moved into memory, and yet
+                    // other types that are passed in registers (e.g., AVX regs)
+                    // and not on memory, despite exceeding this size check.
+                    let (ret_size, ret_align, ret_by_ref) = if ret.is_empty() {
+                        // For unit (`()`) return types (translated from c_void):
+                        (0, 0, false)
+                    } else {
+                        let ty = ctx.resolve_type(signature.return_type());
+
+                        if ty.is_void() {
+                            (0, 0, false)
+                        } else {
+                            let layout = ty.layout(&ctx).expect(&format!(
+                                "Unable to determine layout of return type {:?}",
+                                ty
+                            ));
+                            (layout.size, layout.align, layout.size > 16)
+                        }
+                    };
+
+                    // Now, if we do pass the return value by reference, we'll
+                    // need to shift all other arguments by one registers.
+                    // Build an appropriate base iterator here:
+                    let ptr_layout = Layout {
+                        // Invisible return value pointer:
+                        size: ctx.target_pointer_size(),
+                        align: ctx.target_pointer_size(),
+                        packed: false,
+                    };
+
+                    let ret_by_ref_arg_layouts: Vec<Layout> = if ret_by_ref {
+                        vec![ptr_layout.clone()]
+                    } else {
+                        vec![]
+                    };
+
+                    // Determine the argument register or stack offset of each
+                    // of the function arguments, with the Omniglot arguments
+                    // appended:
+                    let argument_ef_slots = oracle.determine_argument_slots(
+                        &ret_by_ref_arg_layouts
+                            .iter()
+                            .chain(argument_layouts.iter())
+                            .chain(&[
+                                // Runtime parameter, simply a pointer:
+                                ptr_layout.clone(),
+                                // Function pointer:
+                                ptr_layout.clone(),
+                                // InvokeRes reference, also just pointer:
+                                ptr_layout.clone(),
+                            ])
+                            .cloned()
+                            .collect(),
+                    );
+
+                    // Provide access to the runtime and access scope parameters:
+                    let runtime_argument_slot =
+                        &argument_ef_slots[argument_ef_slots.len() - 3];
+                    let runtime_argument_slot_type =
+                        oracle.argument_slot_type(*runtime_argument_slot);
+                    let stack_spill = oracle.determine_stack_spill(
+                        &ret_by_ref_arg_layouts
+                            .iter()
+                            .chain(argument_layouts.iter())
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    );
+
+                    let abi_trait_impl = abi_trait_impls_borrow
+                        .entry(abi_label.to_string()).or_insert_with(move || (
+                            Box::new(move |lib_ident, rt_wrapper_ident, rt_constraints, impls| {
+                                let lib_abirt_trait_ident = format_ident!("{}{}Rt", lib_ident, abi_label);
+
+                                quote! {
+                                    trait #lib_abirt_trait_ident:
+                                        ::omniglot::rt::OGRuntime<ABI = #abi_type>
+                                        #( + #rt_constraints )*
+                                    {}
+
+                                    impl<
+                                        RT: ::omniglot::rt::OGRuntime<ABI = #abi_type>
+                                        #( + #rt_constraints )*
+                                    > #lib_abirt_trait_ident for RT
+                                    {}
+
+                                    impl<
+                                        ID: ::omniglot::id::OGID,
+                                        RT: #lib_abirt_trait_ident<ID = ID>,
+                                        BorrowRT: ::core::borrow::Borrow<RT>
+                                    >
+                                        #lib_ident<ID, RT, #abi_type>
+                                        for #rt_wrapper_ident<ID, RT, BorrowRT>
+                                    {
+                                        type RT = RT;
+
+                                        fn rt(&self) -> &Self::RT {
+                                            self.rt.borrow()
+                                        }
+
+                                        #( #impls )*
+                                    }
+                                }
+                            }),
+                            vec![],
+                            vec![]
+                        ));
+
+                    let (_, ref mut rt_constraints, ref mut impls) =
+                        abi_trait_impl;
+
+                    rt_constraints.push(quote! {
+                        #rt_trait<#stack_spill, #runtime_argument_slot_type>
+                    });
+
+                    let (symbol_table_idx, fixed_symbol_table_idx) =
+                        omniglot_context
+                            .symbol_table_offsets
+                            .0
+                            .get(&ident.to_string())
+                            .unwrap();
+
+                    let (mut wrapped_invocation, invisible_ret_ref_arg) =
+                        if ret_by_ref {
+                            (
+                                quote! {
+                                    self.rt().allocate_stacked_mut(
+                                        ::core::alloc::Layout::from_size_align(#ret_size, #ret_align).unwrap(),
+                                        alloc_scope,
+                                        |ef_ret_ptr, alloc_scope| {
+                                            // TODO: choose unique name!
+                                            let ef_sym = self.rt().lookup_symbol(#symbol_table_idx, #fixed_symbol_table_idx, &self.symbols).unwrap();
+                                            let mut ef_res = <
+                                                <RT as #rt_base_trait>::InvokeRes<#ret_or_unit>
+                                                as #invoke_res_trait<RT, #ret_or_unit>
+                                            >::new();
+
+                                            let ef_res_borrowed = &mut ef_res;
+                                            self.rt().execute(alloc_scope, access_scope, move || {
+                                                unsafe {
+                                                    #ident_int::<RT>(
+                                                        ef_ret_ptr as *mut #ret_or_unit,
+                                                        #( #arg_idents, )*
+                                                        self.rt(),
+                                                        ef_sym,
+                                                        ef_res_borrowed,
+                                                    );
+                                                }
+                                            });
+
+                                            unsafe {
+                                                #invoke_res_trait::<RT, #ret_or_unit>::into_result_stacked(
+                                                    ef_res, self.rt(), ef_ret_ptr as *mut #ret_or_unit)
+                                            }
+                                    }).unwrap()
+                                },
+                                quote! { _: *mut #ret_or_unit, },
+                            )
+                        } else {
+                            (
+                                quote! {
+                                    // TODO: choose unique name!
+                                    let ef_sym = self.rt().lookup_symbol(#symbol_table_idx, #fixed_symbol_table_idx, &self.symbols).unwrap();
+                                    let mut ef_res = <
+                                        <RT as #rt_base_trait>::InvokeRes<#ret_or_unit>
+                                        as #invoke_res_trait<RT, #ret_or_unit>
+                                    >::new();
+
+                                    let ef_res_borrowed = &mut ef_res;
+                                    self.rt().execute(alloc_scope, access_scope, move || {
+                                        unsafe {
+                                            #ident_int::<RT>(
+                                                #( #arg_idents, )*
+                                                self.rt(),
+                                                ef_sym,
+                                                ef_res_borrowed,
+                                            );
+                                        }
+                                    });
+
+                                    #invoke_res_trait::<RT, #ret_or_unit>::into_result_registers(
+                                        ef_res, self.rt())
+                                },
+                                quote! {},
+                            )
+                        };
+
+                    let mut wrapped_args = vec![];
+
+                    for ((slot, arg_ident), (_arg_name, arg_ty)) in
+                        argument_ef_slots[..argument_ef_slots.len() - 3]
+                            .iter()
+                            .zip(arg_idents.iter())
+                            .zip(signature.argument_types())
+                    {
+                        let ty = utils::fnsig_argument_type(ctx, arg_ty);
+                        // Append "pass by reference pointer" in hopes this is a unique enough
+                        // name. TODO: automatically choose a non-colliding name!
+                        let arg_ident_ptr =
+                            format_ident!("{}_pbrptr", arg_ident.to_string());
+
+                        // Check whether an argument must be passed on the
+                        // stack. In that case, we allocate on the foreign
+                        // stack and move the object into that slot:
+                        if slot.pass_by_ref() {
+                            wrapped_invocation = quote! {
+                                self.rt().allocate_stacked_mut(
+                                    ::core::alloc::Layout::new::<#ty>(),
+                                    alloc_scope,
+                                    // We deliberately alias the original argument name:
+                                    move |#arg_ident_ptr: *mut (), alloc_scope| {
+                                        // Move the argument into the allocated slot on the stack
+                                        unsafe { ::core::ptr::write(#arg_ident_ptr as *mut #ty, #arg_ident) };
+                                        // Alias the original argument name:
+                                        let #arg_ident: *const #ty = #arg_ident_ptr as *mut #ty as *const _;
+
+                                        #wrapped_invocation
+                                    },
+                                ).unwrap()
+                            };
+                            wrapped_args
+                                .push(quote! { #arg_ident: *const #ty });
+                        } else {
+                            wrapped_args.push(quote! { #arg_ident: #ty });
+                        }
+                    }
+
+                    impls.push(quote! {
+                        // TODO: collect all of these as a top-level trait?
+                        // TODO: document safety. This is safe because the constructor of the NopRt is unsafe!
+                        #[inline]
+                        fn #ident(
+                            &self,
+                            #( #args, )*
+                            alloc_scope: &mut ::omniglot::markers::AllocScope<'_, <Self::RT as ::omniglot::rt::OGRuntime>::AllocTracker<'_>, ID>,
+                            access_scope: &mut ::omniglot::markers::AccessScope<ID>,
+                        ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_copy::OGCopy<#ret_or_unit>> {
+                            #[unsafe(naked)]
+                            unsafe extern "C" fn #ident_int<
+                                RT: #rt_trait<#stack_spill, #runtime_argument_slot_type>
+                            >(
+                                #invisible_ret_ref_arg
+                                #( #wrapped_args, )*
+                                _rt: &RT,
+                                _fnptr: *const (),
+                                _resptr: &mut RT::InvokeRes<#ret_or_unit>
+                            ) {
+                                core::arch::naked_asm!(
+                                    #invoke_asm,
+                                    invoke = sym RT::invoke,
+                                );
+                            }
+
+                            #wrapped_invocation
+                        }
+                    });
+                };
+            };
+        };
+
         // Add the item to the serialization list if necessary
         if should_wrap {
             result
@@ -4332,6 +4779,7 @@ impl CodeGenerator for Function {
             );
         } else {
             result.push(tokens);
+            // result.push(omniglot_wrapper_tokens);
         }
         Some(times_seen)
     }
@@ -4703,8 +5151,8 @@ impl CodeGenerator for ObjCInterface {
 }
 
 pub(crate) fn codegen(
-    context: BindgenContext,
-) -> Result<(proc_macro2::TokenStream, BindgenOptions), CodegenError> {
+    context: &mut BindgenContext,
+) -> Result<proc_macro2::TokenStream, CodegenError> {
     context.gen(|context| {
         let _t = context.timer("codegen");
         let counter = Cell::new(0);
@@ -5258,6 +5706,20 @@ pub(crate) mod utils {
                 quote! {}
             }
             ty => quote! { -> #ty },
+        }
+    }
+
+    pub(crate) fn fnsig_return_ty_no_arrow(
+        ctx: &BindgenContext,
+        sig: &FunctionSig,
+    ) -> proc_macro2::TokenStream {
+        match fnsig_return_ty_internal(ctx, sig) {
+            syn::Type::Tuple(syn::TypeTuple { elems, .. })
+                if elems.is_empty() =>
+            {
+                quote! { () }
+            }
+            ty => quote! { #ty },
         }
     }
 

@@ -487,6 +487,11 @@ pub(crate) struct BindgenContext {
     /// Populated when we enter codegen by `compute_has_float`; always `None`
     /// before that and `Some` after.
     has_float: Option<HashSet<ItemId>>,
+
+    /// Encapsulated functions wrapper generation configuration.
+    ///
+    /// Set when `--omniglot-configuration-file` is passed on the command line.
+    omniglot: Option<crate::omniglot::OmniglotContext>,
 }
 
 /// A traversal of allowlisted items.
@@ -568,6 +573,11 @@ If you encounter an error missing from this list, please file an issue or a PR!"
         // depfiles need to include the explicitly listed headers too
         let deps = options.input_headers.iter().cloned().collect();
 
+        let opt_omniglot = options
+            .omniglot_configuration_file
+            .as_ref()
+            .map(|cfg| crate::omniglot::OmniglotContext::new(cfg));
+
         BindgenContext {
             items: vec![Some(root_module)],
             includes: Default::default(),
@@ -604,6 +614,7 @@ If you encounter an error missing from this list, please file an issue or a PR!"
             have_destructor: None,
             has_type_param_in_array: None,
             has_float: None,
+            omniglot: opt_omniglot,
         }
     }
 
@@ -1183,10 +1194,7 @@ If you encounter an error missing from this list, please file an issue or a PR!"
 
     /// Enter the code generation phase, invoke the given callback `cb`, and
     /// leave the code generation phase.
-    pub(crate) fn gen<F, Out>(
-        mut self,
-        cb: F,
-    ) -> Result<(Out, BindgenOptions), CodegenError>
+    pub(crate) fn gen<F, Out>(&mut self, cb: F) -> Result<Out, CodegenError>
     where
         F: FnOnce(&Self) -> Result<Out, CodegenError>,
     {
@@ -1223,8 +1231,7 @@ If you encounter an error missing from this list, please file an issue or a PR!"
         self.compute_cannot_derive_hash();
         self.compute_cannot_derive_partialord_partialeq_or_eq();
 
-        let ret = cb(&self)?;
-        Ok((ret, self.options))
+        cb(&self)
     }
 
     /// When the `__testing_only_extra_assertions` feature is enabled, this
@@ -2136,6 +2143,22 @@ If you encounter an error missing from this list, please file an issue or a PR!"
     /// Get the options used to configure this bindgen context.
     pub(crate) fn options(&self) -> &BindgenOptions {
         &self.options
+    }
+
+    pub(crate) fn into_options(self) -> BindgenOptions {
+        self.options
+    }
+
+    /// Get the omniglot context.
+    pub(crate) fn omniglot_context(
+        &self,
+    ) -> Option<&crate::omniglot::OmniglotContext> {
+        self.omniglot.as_ref()
+    }
+
+    /// Get the target information.
+    pub(crate) fn target_info(&self) -> &clang::TargetInfo {
+        &self.target_info
     }
 
     /// Tokenizes a namespace cursor in order to get the name and kind of the

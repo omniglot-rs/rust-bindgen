@@ -1717,6 +1717,22 @@ options! {
         },
         as_args: "--rustfmt-configuration-file",
     },
+    /// The absolute path to the `rustfmt` configuration file.
+    omniglot_configuration_file: Option<PathBuf> {
+        methods: {
+            /// Set the absolute path to the `omniglot` configuration file.
+            ///
+            /// If this option is passed, Encapsulated Functions wrappers will
+        /// be generated for this library and all functions that have been
+        /// assigned an ID.
+            ///
+            pub fn omniglot_configuration_file(mut self, path: Option<PathBuf>) -> Self {
+                self.options.omniglot_configuration_file = path;
+                self
+            }
+        },
+        as_args: "--omniglot-configuration-file",
+    },
     /// Types that should not derive `PartialEq`.
     no_partialeq_types: RegexSet {
         methods: {

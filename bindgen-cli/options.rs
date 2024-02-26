@@ -63,6 +63,26 @@ fn parse_rustfmt_config_path(path_str: &str) -> Result<PathBuf, Error> {
     Ok(path.to_path_buf())
 }
 
+fn parse_omniglot_config_path(path_str: &str) -> Result<PathBuf, Error> {
+    let path = Path::new(path_str);
+
+    if !path.is_absolute() {
+        return Err(Error::raw(
+            ErrorKind::InvalidValue,
+            "--omniglot-configuration-file needs to be an absolute path!",
+        ));
+    }
+
+    if path.to_str().is_none() {
+        return Err(Error::raw(
+            ErrorKind::InvalidUtf8,
+            "--omniglot-configuration-file contains non-valid UTF8 characters.",
+        ));
+    }
+
+    Ok(path.to_path_buf())
+}
+
 fn parse_abi_override(abi_override: &str) -> Result<(Abi, String), Error> {
     let (regex, abi_str) = abi_override
         .rsplit_once('=')
@@ -337,6 +357,10 @@ struct BindgenCommand {
     /// The absolute PATH to the rustfmt configuration file. The configuration file will be used for formatting the bindings. This parameter sets `formatter` to `rustfmt`.
     #[arg(long, value_name = "PATH", conflicts_with = "no_rustfmt_bindings", value_parser=parse_rustfmt_config_path)]
     rustfmt_configuration_file: Option<PathBuf>,
+    /// The absolute PATH to the omniglot configuration file.
+    #[arg(long, value_name = "PATH", value_parser=parse_omniglot_config_path)]
+    omniglot_configuration_file: Option<PathBuf>,
+
     /// Avoid deriving PartialEq for types matching REGEX.
     #[arg(long, value_name = "REGEX")]
     no_partialeq: Vec<String>,
@@ -533,6 +557,7 @@ where
         no_rustfmt_bindings,
         formatter,
         rustfmt_configuration_file,
+        omniglot_configuration_file,
         no_partialeq,
         no_copy,
         no_debug,
@@ -931,6 +956,10 @@ where
 
     if let Some(path) = rustfmt_configuration_file {
         builder = builder.rustfmt_configuration_file(Some(path));
+    }
+
+    if let Some(path) = omniglot_configuration_file {
+        builder = builder.omniglot_configuration_file(Some(path));
     }
 
     for regex in no_partialeq {

@@ -49,6 +49,8 @@ mod ir;
 mod parse;
 mod regex_set;
 
+mod omniglot;
+
 pub use codegen::{
     AliasVariation, EnumVariation, MacroTypeVariation, NonCopyUnionStyle,
 };
@@ -920,10 +922,25 @@ impl Bindings {
             parse(&mut context)?;
         }
 
-        let (module, options) =
-            codegen::codegen(context).map_err(BindgenError::Codegen)?;
+        // // Generate the Encapsulated Functions prologue and epilogue:
+        // let omniglot_prologue = context.omniglot_context().map(|ef| ef.prologue()).unwrap_or_else(|| quote! {});
 
-        Ok(Bindings { options, module })
+        let module =
+            codegen::codegen(&mut context).map_err(BindgenError::Codegen)?;
+
+        // Generate the Encapsulated Functions prologue and epilogue:
+        let omniglot_prologue = context
+            .omniglot_context()
+            .map(|ef| ef.prologue())
+            .unwrap_or_else(|| quote! {});
+
+        Ok(Bindings {
+            options: context.into_options(),
+            module: quote! {
+            #omniglot_prologue
+            #module
+            },
+        })
     }
 
     /// Write these bindings as source text to a file.

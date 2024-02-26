@@ -38,8 +38,10 @@ proc-macro2 = { version = "1", default-features = false }
 quote = { version = "1", default-features = false }
 regex = { version = "1.5.3", default-features = false, features = ["std", "unicode-perl"] }
 rustc-hash = "1.0.1"
+serde = { version = "1.0.197", features = ["derive"] }
 shlex = "1"
 syn = { version = "2.0", features = ["full", "extra-traits", "visit-mut"] }
+toml = "0.8.10"
 which = { version = "4.2.1", optional = true, default-features = false }
 
 [features]
