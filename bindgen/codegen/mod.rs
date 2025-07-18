@@ -4631,7 +4631,7 @@ impl CodeGenerator for Function {
                                             >::new();
 
                                             let ef_res_borrowed = &mut ef_res;
-                                            self.rt().execute(alloc_scope, access_scope, move || {
+                                            self.rt().execute(ef_sym, alloc_scope, access_scope, move || {
                                                 unsafe {
                                                     #ident_int::<RT>(
                                                         ef_ret_ptr as *mut #ret_or_unit,
@@ -4662,7 +4662,7 @@ impl CodeGenerator for Function {
                                     >::new();
 
                                     let ef_res_borrowed = &mut ef_res;
-                                    self.rt().execute(alloc_scope, access_scope, move || {
+                                    self.rt().execute(ef_sym, alloc_scope, access_scope, move || {
                                         unsafe {
                                             #ident_int::<RT>(
                                                 #( #arg_idents, )*
