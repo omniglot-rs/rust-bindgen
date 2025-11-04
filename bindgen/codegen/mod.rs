@@ -4641,7 +4641,7 @@ impl CodeGenerator for Function {
                                                         ef_res_borrowed,
                                                     );
                                                 }
-                                            });
+                                            })?;
 
                                             unsafe {
                                                 #invoke_res_trait::<RT, #ret_or_unit>::into_result_stacked(
@@ -4671,7 +4671,7 @@ impl CodeGenerator for Function {
                                                 ef_res_borrowed,
                                             );
                                         }
-                                    });
+                                    })?;
 
                                     #invoke_res_trait::<RT, #ret_or_unit>::into_result_registers(
                                         ef_res, self.rt())
