@@ -233,13 +233,13 @@ impl OmniglotContext {
         abi: ABIKind,
     ) -> Option<Box<dyn OmniglotABIOracle + 'a>> {
         match (triple, abi) {
-            ("riscv32-unknown-unknown", ABIKind::GenericItanium) |
-            ("riscv32-unknown-none-elf", ABIKind::GenericItanium) => {
+            ("riscv32-unknown-unknown", ABIKind::GenericItanium)
+            | ("riscv32-unknown-none-elf", ABIKind::GenericItanium) => {
                 Some(Box::new(OmniglotRv32iCOracle::new(ctx)))
             }
 
-            ("x86_64-pc-linux-gnu", ABIKind::GenericItanium) |
-            ("x86_64-unknown-linux-gnu", ABIKind::GenericItanium) => {
+            ("x86_64-pc-linux-gnu", ABIKind::GenericItanium)
+            | ("x86_64-unknown-linux-gnu", ABIKind::GenericItanium) => {
                 Some(Box::new(OmniglotSysVAMD64Oracle::new(ctx)))
             }
 
@@ -339,9 +339,9 @@ fn rv_determine_argument_slots<const RV64: bool>(
         // checking for whether both the size AND alignment of the type are
         // at least twice the pointer size, which will -- for instance --
         // exclude structs that hold two pointers:
-        let double_pointer_word = (arg.size > ptr_size &&
-            arg.size <= 2 * ptr_size) &&
-            (arg.align > ptr_size && arg.align <= 2 * ptr_size);
+        let double_pointer_word = (arg.size > ptr_size
+            && arg.size <= 2 * ptr_size)
+            && (arg.align > ptr_size && arg.align <= 2 * ptr_size);
 
         if double_pointer_word && ptr_offset % 2 == 1 {
             ptr_offset += 1;
