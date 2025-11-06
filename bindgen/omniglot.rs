@@ -206,19 +206,15 @@ impl OmniglotContext {
                 RT: ::omniglot::rt::OGRuntime,
                 BorrowRT: ::core::borrow::Borrow<RT>,
             > #wrapper_type_ident<ID, RT, BorrowRT> {
-                pub fn new(rt: BorrowRT) -> Option<Self> {
-                    if let Some(symbols) = rt.borrow().resolve_symbols(
+                pub fn new(rt: BorrowRT) -> Result<Self, Option<&'static ::core::ffi::CStr>> {
+                    rt.borrow().resolve_symbols(
                         &#function_table_ident,
                         &#fixed_offset_function_table_ident
-                    ) {
-                        Some(#wrapper_type_ident {
-                            rt: rt,
-                            symbols,
-                            _id: ::core::marker::PhantomData,
-                        })
-                    } else {
-                        None
-                    }
+                    ).map(|symbols| #wrapper_type_ident {
+                        rt: rt,
+                        symbols,
+                        _id: ::core::marker::PhantomData,
+                    })
                 }
 
                 pub fn into_inner(self) -> BorrowRT {
