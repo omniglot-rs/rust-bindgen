@@ -573,8 +573,14 @@ impl<'a> OmniglotABIOracle for OmniglotSysVAMD64Oracle<'a> {
 
     fn invoke_asm(&self) -> TokenStream {
         quote! {
+            // Before a "call", the stack needs to be aligned onto a 16 byte
+            // boundary. As a consequence, when entering this trampoline
+            // function, the stack will be 8-byte aligned (or
+            // "half-aligned"). We're performing a tail-call here, which should
+            // behave like a regular call to the callee. Thus we can maintain
+            // our current stack alignment.
             "lea r10, [rip + {invoke}]",
-                "jmp r10"
+            "jmp r10"
         }
     }
 }
