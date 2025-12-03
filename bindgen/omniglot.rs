@@ -197,7 +197,7 @@ impl OmniglotContext {
                 BorrowRT: ::core::borrow::Borrow<RT>,
             > {
                 rt: BorrowRT,
-                symbols: RT::SymbolTableState<#function_table_length, #fixed_function_table_length>,
+                symbols: RT::SymbolTableState<'static, #function_table_length, #fixed_function_table_length>,
                 _id: ::core::marker::PhantomData<ID>,
             }
 
