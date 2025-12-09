@@ -4433,7 +4433,7 @@ impl CodeGenerator for Function {
                         #( #args, )*
                         alloc_scope: &mut ::omniglot::markers::AllocScope<'_, <Self::RT as ::omniglot::rt::OGRuntime>::AllocTracker<'_>, ID>,
                         access_scope: &mut ::omniglot::markers::AccessScope<ID>,
-                    ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_copy::OGCopy<#ret_or_unit>>;
+                    ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_ret::OGRet<#ret_or_unit>>;
                 });
 
                 let mut abi_trait_impls_borrow =
@@ -4469,9 +4469,9 @@ impl CodeGenerator for Function {
                         #( #args, )*
                         _alloc_scope: &mut ::omniglot::markers::AllocScope<'_, <Self::RT as ::omniglot::rt::OGRuntime>::AllocTracker<'_>, ID>,
                         _access_scope: &mut ::omniglot::markers::AccessScope<ID>,
-                    ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_copy::OGCopy<#ret_or_unit>> {
+                    ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_ret::OGRet<#ret_or_unit>> {
                         ::omniglot::OGResult::Ok(
-                            ::omniglot::foreign_memory::og_copy::OGCopy::new(
+                            ::omniglot::foreign_memory::og_ret::OGRet::from_valid_value(
                                 unsafe { self::#ident(#( #arg_idents ),*) }))
                     }
                 });
@@ -4729,7 +4729,7 @@ impl CodeGenerator for Function {
                             #( #args, )*
                             alloc_scope: &mut ::omniglot::markers::AllocScope<'_, <Self::RT as ::omniglot::rt::OGRuntime>::AllocTracker<'_>, ID>,
                             access_scope: &mut ::omniglot::markers::AccessScope<ID>,
-                        ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_copy::OGCopy<#ret_or_unit>> {
+                        ) -> ::omniglot::OGResult<::omniglot::foreign_memory::og_ret::OGRet<#ret_or_unit>> {
                             #[unsafe(naked)]
                             unsafe extern "C" fn #ident_int<
                                 RT: #rt_trait<#stack_spill, #runtime_argument_slot_type>
